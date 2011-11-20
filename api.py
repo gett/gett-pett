@@ -232,31 +232,4 @@ class File(Base):
 	#def destroy(self):
 	#	pass
 
-#if __name__ == '__main__':
-	#access = 'a.test.uAdqxG7tSsP6qxLzVBXhUhJXcHGBSbL6Gck2m-fc.1321821220.7cdace3b62785c20d70fae861f3c7777984e1651'
 
-gett = Gett({ 'apikey' : 'tfztwb6f0xaoo5hfrfi0ac57kokzkt9', 'email' : 'dettebrugestiltest@hotmail.com', 'password' : 'qweqwe' })
-	#print gett.token
-	#print gett.userid
-	#print gett.user()
-
-#	print gett.user().shares()
-
-	#print User.client()
-
-	#print User.get('a.test.a7KfN4mGtTydx.1321800365.0e133992e039b6874e700ae70b0a02267710f519')
-	#print Share.all(access)
-
-	#class H(object):
-	#	def __init__(self):
-	#		self.h = 1
-
-	#	@property
-	#	def g():
-	#		pass
-
-	#H().g = 6
-
-	#print Share.create(access, { 'title' : 'cute' })
-
-	#print Share.find('a.test.a7KfN4mGtTydx.1321800365.0e133992e039b6874e700ae70b0a02267710f519', '8peRL5A')
