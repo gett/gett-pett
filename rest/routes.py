@@ -72,7 +72,7 @@ class Route(object):
 
 			#return cls.routes.parse_route(route)
 			request = cls.routes.parse_route(route)
-			if self.write and not isinstance(request.body, str):
+			if self.write: #and not isinstance(request.body, str):
 				#if hasattr(request.body, 'serialize'):
 				#	request.body = request.body.serialize()
 				#else:
@@ -213,8 +213,9 @@ for name in _actions:
 	setattr(ResourceRoutes, name, decorator)
 """
 class RestClient(object):
-	def __init__(self, host):
+	def __init__(self, host, protocol = 'http'):
 		self._host = host
+		self._protocol = protocol
 
 		#self._encoder = json.JSONEncoder()
 		#self._decoder = json.JSONDecoder()
@@ -234,12 +235,59 @@ class RestClient(object):
 	def host(self):
 		return self._host
 
-	def request(self, method = 'GET', url = '/', query = {}, body = '', headers = {}):
-		#print(method, url, query, body, headers)
-		http_connection = httplib.HTTPConnection(self._host)
-		http_connection.request(method, url + '?' + urllib.urlencode(query), body, headers)
+	@property
+	def protocol(self):
+		return self._protocol
+
+	"""
+	def https_request(self, method = 'GET', url = '/', query = {}, body = '', headers = {}):
+		http_connection = httplib.HTTPSConnection(self._host)
+		url = url + '?' + urllib.urlencode(query) if query else url
+
+		print(method, url, query, body, headers)
+
+		http_connection.request(method, url, body, headers)
 
 		resp = http_connection.getresponse()
+		if resp.status not in range(200, 300):
+			raise IOError('Unexpected status code received %s %s' % (resp.status, resp.reason))
+
+		return resp.read()
+
+	def request(self, method = 'GET', url = '/', query = {}, body = '', headers = {}):
+		http_connection = httplib.HTTPConnection(self._host)
+		url = url + '?' + urllib.urlencode(query) if query else url
+
+		print(method, url, query, body, headers)
+
+		http_connection.request(method, url, body, headers)
+
+		resp = http_connection.getresponse()
+		if resp.status not in range(200, 300):
+			raise IOError('Unexpected status code received %s %s' % (resp.status, resp.reason))
+
+		return resp.read()
+	"""
+
+	def request(self, *args):
+		client = self._client()
+		return self._request(client, *args)
+
+	def _http(self):
+		return httplib.HTTPConnection(self._host)
+
+	def _https(self):
+		return httplib.HTTPSConnection(self._host)
+
+	def _client(self):
+		return getattr(self, '_' + self._protocol)()
+
+	def _request(self, client, method = 'GET', url = '/', query = {}, body = '', headers = {}):
+		print(method, url, query, body, headers)
+		url = url + '?' + urllib.urlencode(query) if query else url
+		client.request(method, url, body, headers)
+
+		resp = client.getresponse()
 		if resp.status not in range(200, 300):
 			raise IOError('Unexpected status code received %s %s' % (resp.status, resp.reason))
 
@@ -251,7 +299,7 @@ class Base(object):
 	@classmethod
 	def client(cls):
 		if not hasattr(cls, '_rest_client'):
-			cls._rest_client = RestClient(cls.host)
+			cls._rest_client = RestClient(cls.host, getattr(cls, 'protocol', 'http'))
 
 		return cls._rest_client
 

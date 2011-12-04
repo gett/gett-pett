@@ -1,10 +1,9 @@
 import __builtin__
 
 class Accessor(object):
-	ALLOWED = ['type', 'required', 'write', 'read', 'id']
+	ALLOWED = ['type', 'write', 'read', 'id']
 
 	def __init__(self, opts = {}):
-		#allowed = ['type', 'required', 'write', 'read', 'id']
 		for name, value in opts.items():
 			if name not in self.ALLOWED:
 				raise StandardError('Unknown option "%s"' % name)
@@ -22,29 +21,29 @@ class Accessor(object):
 		self.write = f
 		return self
 
-	def valid(self, instance):
-		value = instance.read_attribute(self.name)
-		if self.required or self.id:
-			if value is None: 
-				return False
+	#def valid(self, instance):
+	#	value = instance.read_attribute(self.name)
+	#	if self.required or self.id:
+	#		if value is None: 
+	#			return False
 
-		if self.type:
-			if not isinstance(value, self.type):
-				return False
+	#	if self.type:
+	#		if not isinstance(value, self.type):
+	#			return False
 
-		return True
+	#	return True
 
 	def __get__(self, instance, owner):
 		if self.read:
 			return self.read(instance)
 
-		return instance.__dict__.get(self.name, None)
+		return instance.__dict__.get('_' + self.name, None)
 
 	def __set__(self, instance, value):
 		if self.write:
 			self.write(instance, value)
 		else:
-			instance.__dict__[self.name] = value
+			instance.__dict__['_' + self.name] = value
 
 class Property(Accessor):
 	def __get__(self, instance, owner):
@@ -57,6 +56,9 @@ class Property(Accessor):
 		if self.write:
 			self.write(instance, value)
 		else:
+			if self.type and not value is None and value != '':
+				value = typecast.cast(value, self.type)
+
 			instance.write_attribute(self.name, value)
 
 def property(**opts):
@@ -146,8 +148,8 @@ class Base(object):
 	def __str__(self):
 		return str(self.attributes)
 
-	def valid(self):
-		return all([p.valid(self) for n, p in self.properties()])
+	#def valid(self):
+	#	return all([p.valid(self) for n, p in self.properties()])
 
 		#props = dict(self.properties())
 		#for name, value in self.attributes.items():
@@ -198,6 +200,8 @@ class Base(object):
 		for name, value in attrs.items():
 			if name in props:			
 				setattr(self, name, value)
+
+import typecast
 
 if __name__ == '__main__':
 	#http = HttpClient('')

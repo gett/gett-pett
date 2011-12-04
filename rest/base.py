@@ -4,6 +4,7 @@ from routes import ResourceRoutes, RestClient, RestRoutes
 import serialization
 import properties
 from properties import property, accessor
+from properties import Base as Properties
 
 class Resource(serialization.Base, properties.Base, routes.Base):
 	pass
