@@ -404,4 +404,3 @@ class File(rest.Properties):
 		else:
 			raise StandardError("Wrong state, can't retreive scaled image")
 
-	
