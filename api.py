@@ -1,235 +1,407 @@
-import rest.base as base
-import json
 import time
+import urllib
+import urllib2
+import urlparse
+import json
+import mimetypes
 import os
+import httplib
+import types
 
-HOST = 'open.ge.tt'
-VERSION = 1
+import rest
 
-class Base(base.Resource):
-	serialization = parsing = 'json'
-	version = VERSION
-	host = HOST
+# TODO
+# investigate /sharename/fileid/upload hangs
+# make setup.py
+# update README.md
+# parse timestamps to datetime
 
-	@classmethod
-	def gett_url(cls, url):
-		if not url.startswith('/'):
-			url = '/' + url
+def _api_url(*url):
+	if len(url) == 1:
+		url = url[0]
 
-		return '/%s%s/' % (cls.version, url)
+	if isinstance(url, tuple) or isinstance(url, list):
+		ids = url[1:]
+		url = url[0] % ids
 
-	@classmethod
-	def gett_routes(cls, url):
-		return base.ResourceRoutes(cls.gett_url(url), headers = { 'User-Agent' : 'gett-pett' })
+	return 'https://open.ge.tt/1/%s' % url
 
-class Token(object):
-	def __init__(self, attrs):
-		self._accesstoken = attrs['accesstoken']
-		self._refreshtoken = attrs['refreshtoken']
-		self._expires = time.time() + attrs['expires']
+def _request(url, token = None):
+	url = _api_url(url)
+
+	query = {}
+	if token:
+		if hasattr(token, 'token'):
+			token = token.token
+
+		query['accesstoken'] = token
+
+	url = url + '?' + urllib.urlencode(query)
+
+	req = urllib2.Request(url)
+	req.add_header('User-Aget', 'pett-gett')
+
+	print url
+
+	return req
+
+def _response(req):
+	try:
+		resp = urllib2.urlopen(req)
+	except urllib2.HTTPError as err:
+		print 'error', err.read() #, err.info(), err.code
+		raise
+
+	headers = resp.info()
+
+	if headers['Content-Type'] == 'application/json':
+		return json.loads(resp.read())
+
+	return resp
+
+def _get(url, token = None):
+	req = _request(url, token)
+	return _response(req)
+
+def _post(url, token = None, body = None):
+	req = _request(url, token)
+
+	if isinstance(body, dict):
+		body = json.dumps(body)
+
+	if not body is None:
+		req.add_header('Content-Type', 'application/json')
+
+	req.add_data(body or '')
+
+	return _response(req)
+
+class Token(rest.Properties):
+	accesstoken = rest.property()
+	refreshtoken = rest.property()
+	expires = rest.property()
 
 	def __str__(self):
-		return self._accesstoken
+		return self.accesstoken
 
-	@property
-	def accesstoken(self):
-		return self._accesstoken
-
-	@property
-	def refreshtoken(self):
-		return self._refreshtoken
-
-	@property
-	def attributes(self):
-		return dict([(name, getattr(self, '_%s' % name)) for name in ['accesstoken', 'refreshtoken', 'expires']])
+	@expires.set
+	def expires(self, expires):
+		self.write_attribute('expires', time.time() + expires)
 
 	def expired(self):
-		return self._expires <= time.time()
+		return self.expires <= time.time()
 
-def token(user_or_token):
-	token = user_or_token.token if hasattr(user_or_token, 'token') else user_or_token
-	return { 'accesstoken' : token }
+class User(rest.Properties):
+	class Storage(rest.Properties):
+		used = rest.property()
+		limit = rest.property()
+		extra = rest.property()
 
-class Gett(object):
-	client = base.RestClient(HOST)
+		@classmethod
+		def get(cls, user):
+			user = _get(('users/me'), user)
+			return cls(user['storage'])
 
-	# Accepts a dict containing secrettoken, email and password or
-	# a refreshtoken string
-	def __init__(self, credentials_or_refreshtoken):
-		self._auth = credentials_or_refreshtoken
+		def limit_exceeded(self):
+			return self.left() <= 0
+
+		def left(self):
+			return self.limit - self.used
+
+	userid = rest.property(id = True)
+	fullname = rest.property()
+	email = rest.property()
+	storage = rest.property()
+
+	@classmethod
+	def login(cls, credentials_or_refreshtoken):
+		auth = credentials_or_refreshtoken
+
 		if isinstance(credentials_or_refreshtoken, str):
-			self._auth = { 'refreshtoken' : credentials_or_refreshtoken }
+			auth = { 'refreshtoken' : credentials_or_refreshtoken }
+		elif isinstance(credentials_or_refreshtoken, Token):
+			auth = { 'refreshtoken' : credentials_or_refreshtoken.refreshtoken }
 
-		self._token = None
-		self._userid = None
-
-	@property
-	def userid(self):
-		return self._userid
-
-	@property
-	def token(self):
-		if self._token is None or self._token.expired():
-			self.authenticate()
-
-		return self._token
-
-	def authenticate(self):
-		body = None
-		if self._token:
-			body = { 'refreshtoken' : self._token.refreshtoken }
-		else:
-			body = self._auth
-			
-		resp = self.client.request('POST', '/%s/u/authenticate' % VERSION, {}, json.dumps(body))
-		resp = json.loads(resp)
-
-		self._userid = resp['userid']
-		self._token = Token(resp)
-
-		return self._token
-
-	def user(self):
-		user = User()
-		#user = User.get(self.token)
-		user.gett_client = self
+		attrs = _post('users/login', body = auth)
+		user = cls(attrs['user'])
+		user.token = Token(attrs)
 
 		return user
 
-def sharename(share_or_sharename):
-	return share_or_sharename.sharename if isinstance(share_or_sharename, Share) else share_or_sharename
+	@classmethod
+	def login_token(cls, credentials_or_refreshtoken):
+		user = cls.login(credentials_or_refreshtoken)
+		return user.token
 
-class User(Base):
-	routes = Base.gett_routes('u')
+	@storage.set
+	def storage(self, value):
+		if isinstance(value, dict):
+			value = User.Storage(value)
 
-	userid = base.property(id = True)
-	fullname = base.property(required = True)
-	email = base.property(required = True)
-	storage = base.property(required = True, type = int)
-
-	gett_client = base.accessor(type = Gett)
-
-	@routes('read')
-	def get(toke):
-		return ('GET', None, token(toke))
+		self.write_attribute('storage', value)
 
 	@property
 	def token(self):
-		return self.gett_client.token
+		if self._token.expired():
+			self.refresh_token()
+
+		return self._token
+
+	@token.setter
+	def token(self, token):
+		self._token = token
+
+	def refresh_token(self):
+		self._token = self.login_token(self._token)
+		return self._token
+
+	def get_storage(self):
+		self.storage = User.Storage.get(self)
+		return self.storage
+
+	def shares(self):
+		shares = Share.all(self)
+		
+		for share in shares:
+			share.user = self
+
+		return shares
 
 	def share(self, sharename):
-		share = Share.find(self, sharename)
+		share = Share.find(sharename)
 		share.user = self
 
 		return share
 
-	def shares(self):
-		shares = Share.all(self)
-		for share in shares: share.user = self
-
-		return shares
-
 	def create_share(self, attrs = {}):
-		return Share.create(self, attrs)
+		share = Share.create(self, attrs)
+		share.user = self
 
-	def update_share(self, share_or_sharename, attrs = {}):
-		return Share.update(self, sharename(share_or_sharename), attrs)
+		return share
 
-	def destroy_share(self, share_or_sharename):
-		Share.destroy(self, sharename(share_or_sharename))
+	def update_share(self, sharename, attrs = {}):
+		share = Share.update(self, sharename, attrs)
+		share.user = self
 
-class Share(Base):
-	routes = Base.gett_routes('s')
+		return share
 
-	sharename = base.property(id = True)
-	title = base.property()
-	readystate = base.property(required = True)
-	created = base.property(required = True, type = int)
-	updated = base.property(required = True, type = int)
-	live = base.property(required = True, type = bool)
-	files = base.property(required = True, type = list)
+	def destroy_share(self, sharename):
+		Share.destroy(self, sharename)
 
-	user = base.accessor(type = User)
+def _update_share(self, attrs = {}):
+	share = self.__class__.update(self.user, self.sharename, attrs)
+	self.attributes = share.attributes
 
-	@routes('read')
-	def all(user):
-		return ('GET', None, token(user))
+	return self
 
-	@routes('read')
-	def find(user, sharename):
-		return ('GET', '%s' % sharename, token(user))
+def _destroy_share(self):
+	self.__class__.destroy(self.user, self.sharename)
 
-	@routes('read', 'write')
-	def create(user, attrs = {}):
-		return ('POST', None, token(user), attrs)
+class Share(rest.Properties):
+	def __new__(cls, *args, **kwargs):
+		instance = super(Share, cls).__new__(cls, *args, **kwargs)
 
-	@routes('read', 'write')
-	def update(user, sharename, attrs = {}):
-		return ('GET', '%s' % sharename, token(user), attrs)
+		instance.update = types.MethodType(_update_share, instance, cls)
+		instance.destroy = types.MethodType(_destroy_share, instance, cls)
 
-	@routes
-	def destroy(user, sharename):
-		return ('DELETE', '%s' % sharename, token(user))
+		return instance
+
+	sharename = rest.property(id = True)
+	title = rest.property()
+	readystate = rest.property()
+	created = rest.property()
+	updated = rest.property()
+	live = rest.property()
+	files = rest.property()
+
+	@classmethod
+	def all(cls, token):
+		shares = _get('shares', token = token)
+		return [cls(s) for s in shares]
+
+	@classmethod
+	def find(cls, sharename):
+		share = _get(('shares/%s', sharename))
+		return cls(share)
+
+	@classmethod
+	def create(cls, token, attrs = {}):
+		share = _post('shares/create', token, attrs)
+		return cls(share)
+
+	@classmethod
+	def update(cls, token, sharename, attrs = {}):
+		share = _post(('shares/%s/update', sharename), token, attrs)
+		return cls(share)
+
+	@classmethod
+	def destroy(cls, token, sharename):
+		_post(('shares/%s/destroy', sharename), token)
 
 	@files.set
-	def files(self, files):
-		files = files or []
-		self.write_attribute('files', [File(attr) for attr in files])
+	def files(self, value):
+		value = value or []
+		self.write_attribute('files', [File(f) for f in value])
+
+	@property
+	def user(self):
+		return self._user
+
+	@user.setter
+	def user(self, user):
+		self._user = user
 
 	def file(self, fileid):
-		return File.find(self.user, self.sharename, fileid)
+		file = File.find(self.sharename, fileid)
+		file.share = self
+
+		return file
 
 	def create_file(self, attrs = {}):
-		return File.create(self.user, self.sharename, attrs)
+		file = File.create(self.user, self.sharename, attrs)
+		file.share = self
 
-	def destroy_file(self, file_or_fileid):
-		fileid = file_or_fileid.fileid if isinstance(file_or_fileid, File) else file_or_fileid
+		return file
+
+	def destroy_file(self, fileid):
 		File.destroy(self.user, self.sharename, fileid)
 
-	#def update(self, attrs = {}):
-	#	return self.__class__.update(self.user, self.sharename, attrs)
+	def blob_file(self, fileid):
+		file = self.file(fileid)
+		return file.blob()
 
-	#def destroy(self):
-	#	self.__class__.destroy(self.user, self.sharename)
+	def write_file(self, fileid, file):
+		file = self.file(fileid)
+		file.write(file)
 
-class File(Base):
-	routes = Base.gett_routes('f')
+	def upload_file(self, filepath):
+		return File.upload_file(self.user, self.sharename, filepath)
 
-	fileid = base.property(id = True)
-	filename = base.property(required = True)
-	downloadurl = base.property(required = True)
-	readystate = base.property(required = True)
-	size = base.property(required = True, type = int)
-	downloads = base.property(required = True)
-	created = base.property(required = True, type = int)
-	updated = base.property(required = True, type = int)
+def _destroy_file(self):
+	share = self.share
+	self.__class__.destroy(share.user, share.sharename, self.fileid)
 
-	share = base.accessor(type = Share)
-	#filepath = base.accessor()
+class File(rest.Properties):
+	def __new__(cls, *args, **kwargs):
+		instance = super(File, cls).__new__(cls, *args, **kwargs)
+		instance.destroy = types.MethodType(_destroy_file, instance, cls)
 
-	@routes('read')
-	def all(user, sharename):
-		return ('GET', '%s' % s, token(user))
+		return instance
 
-	@routes('read')
-	def find(user, sharename, fileid):
-		return ('GET', '%s/%s' % (sharename, fileid), token(user))
+	class Upload(rest.Properties):
+		puturl = rest.property()
+		posturl = rest.property()
 
-	@routes('read', 'write')
-	def create(user, sharename, attrs = {}):
-		return ('POST', '%s' % sharename, token(user), attrs)
+		@classmethod
+		def get(cls, token, sharename, fileid):
+			upload = _get(('files/%s/%s/upload', sharename, fileid), token)
+			return cls(upload)
 
-	@routes
-	def destroy(user, sharename, fileid):
-		return ('DELETE', '%s/%s' % (sharename, fileid), token(user))
+		def putpath(self):
+			url = urlparse.urlparse(self.puturl)
+			return url.path + '?' + url.query
 
-	def read(self, file):
-		pass
+		def postpath(self):
+			url = urlparse.urlparse(self.posturl)
+			return url.path + '?' + url.query
 
-	def write(self, file):
-		pass
+	fileid = rest.property(id = True)
+	filename = rest.property()
+	sharename = rest.property()
+	downloadurl = rest.property()
+	readystate = rest.property()
+	size = rest.property()
+	downloads = rest.property()
+	created = rest.property()
+	updated = rest.property()
+	upload = rest.property()
 
-	#def destroy(self):
-	#	pass
+	@classmethod
+	def find(cls, sharename, fileid):
+		file = _get(('files/%s/%s', sharename, fileid))
+		return cls(file)
 
+	@classmethod
+	def create(cls, token, sharename, attrs = {}):
+		file = _post(('files/%s/create', sharename), token, attrs)
+		return cls(file)
 
+	@classmethod
+	def destroy(cls, token, sharename, fileid):
+		_post(('files/%s/%s/destroy', sharename, fileid), token)
+
+	@classmethod
+	def upload_file(cls, token, sharename, filepath):
+		with open(filepath, 'rb') as f:
+			mime, enc = mimetypes.guess_type(filepath)
+			file = cls.create(token, sharename, { 'filename' : os.path.basename(filepath) })
+
+			file.write(f, mime)
+
+			return file
+
+	@upload.set
+	def upload(self, value):
+		if value:
+			if isinstance(value, dict):
+				value = File.Upload(value)
+
+			self.write_attribute('upload', value)
+
+	@upload.get
+	def upload(self):
+		upload = self.read_attribute('upload')
+
+		if upload is None:
+			share = self.share
+			upload = File.Upload.get(share.user, share.sharename, self.fileid)
+
+			self.upload = upload
+
+		return upload
+
+	@property
+	def share(self):
+		return self._share
+
+	@share.setter
+	def share(self, share):
+		self.sharename = share.sharename
+		self._share = share
+
+	def write(self, file, mimetype = None):
+		headers =  { 'User-Agent' : 'gett-pett' }
+
+		if mimetype:
+			headers['Content-Type'] = mimetype
+
+		conn = httplib.HTTPConnection('blobs.ge.tt')
+		conn.request('PUT', self.upload.putpath(), file, headers)
+
+		resp = conn.getresponse()
+
+		if resp.status not in range(200, 300):
+			raise urllib2.HTTPError(self.upload.puturl, resp.status, resp.reason, dict(resp.getheaders()), resp)
+			#raise urllib2.URLError('Unexpected status code received %s %s' % (resp.status, resp.reason))
+
+		self.readystate = 'uploaded'
+
+	def blob(self):
+		if self.readystate in ['uploading', 'uploaded'] or (self.readystate == 'remote' and self.share.live):
+			return _get(('files/%s/%s/blob', self.share.sharename, self.fileid))
+		else:
+			raise StandardError("Wrong state, can't read file")
+
+	def thumb(self):
+		if self.readystate == 'uploaded':
+			return _get(('files/%s/%s/blob/thumb', self.share.sharename, self.fileid))
+		else:
+			raise StandardError("Wrong state, can't retreive image thumb")
+
+	def scale(self, width, height):
+		if self.readystate == 'uploaded':
+			return _get(('files/%s/%s/blob/scale?size=%sx%s', self.share.sharename, self.fileid, width, height))
+		else:
+			raise StandardError("Wrong state, can't retreive scaled image")
+
+	
