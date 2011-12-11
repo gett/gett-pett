@@ -2,24 +2,40 @@
 
 Tested with python 2.7.2
 
-	import api
+	import gett
 
-	gett = api.Gett({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
+	# authenticate and get user information
+	user = gett.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
 	# or 
-	gett = api.Gett('<refreshtoken as string>')
+	user = gett.User.login('<refreshtoken as string>')
 
-	# authenticate and fetch the user information
-	user = gett.user()
-
+	# fetch all shares
 	print user.shares()
 	# or
-	print api.Share.all(gett.token)
+	print gett.Share.all(user.token)
 	# or
-	print api.Share.all(user)
+	print gett.Share.all(user)
+	# or
+	print gett.Share.all('<accesstoken as string>')
 
-	print user.share('8gt4').files()
+	# NOTE that the last three calls will not set the accesstoken or user on the share, this
+	# needs to be done manually.
 
+	# get all files in a share. NOTE that this is not a method call.
+	print user.share('8gt4').files
+
+	# create a share and a file
 	share = user.create_share({ 'title' : 'hello' })
-	share.create_file({ 'filename' : 'world' })
+	share.create_file({ 'filename' : 'world.txt' })
 
 	print share.file(0)
+
+	# create and upload file
+	share.upload_file('path/to/file')
+
+	# download file
+	file = share.file(0)
+	blob = file.blob()
+
+	# blob is a file like object, which responds to read and close
+	print blob.read()

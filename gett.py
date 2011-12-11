@@ -7,6 +7,7 @@ import mimetypes
 import os
 import httplib
 import types
+import datetime
 
 import rest
 
@@ -14,7 +15,7 @@ import rest
 # investigate /sharename/fileid/upload hangs
 # make setup.py
 # update README.md
-# parse timestamps to datetime
+# better error handling?
 
 def _api_url(*url):
 	if len(url) == 1:
@@ -188,6 +189,9 @@ class User(rest.Properties):
 	def destroy_share(self, sharename):
 		Share.destroy(self, sharename)
 
+def _created(self, value):
+	self.write_attribute('created', datetime.datetime.fromtimestamp(value))
+
 def _update_share(self, attrs = {}):
 	share = self.__class__.update(self.user, self.sharename, attrs)
 	self.attributes = share.attributes
@@ -209,8 +213,7 @@ class Share(rest.Properties):
 	sharename = rest.property(id = True)
 	title = rest.property()
 	readystate = rest.property()
-	created = rest.property()
-	updated = rest.property()
+	created = rest.property(write = _created)
 	live = rest.property()
 	files = rest.property()
 
@@ -312,8 +315,7 @@ class File(rest.Properties):
 	readystate = rest.property()
 	size = rest.property()
 	downloads = rest.property()
-	created = rest.property()
-	updated = rest.property()
+	created = rest.property(write = _created)
 	upload = rest.property()
 
 	@classmethod
@@ -403,6 +405,4 @@ class File(rest.Properties):
 			return _get(('files/%s/%s/blob/scale?size=%sx%s', self.share.sharename, self.fileid, width, height))
 		else:
 			raise StandardError("Wrong state, can't retreive scaled image")
-
-
 	
