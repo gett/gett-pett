@@ -16,6 +16,9 @@ import rest
 # update README.md
 # better error handling? (GettError)
 
+class ApiError(StandardError):
+	pass
+
 def _api_url(*url):
 	if len(url) == 1:
 		url = url[0]
@@ -25,6 +28,13 @@ def _api_url(*url):
 		url = url[0] % ids
 
 	return 'https://open.ge.tt/1/%s' % url
+
+def _safe_read(resp):
+	try:
+		msg = resp.read()
+		return json.loads(msg)['error']
+	except:
+		return ''
 
 def _request(url, token = None):
 	url = _api_url(url)
@@ -49,8 +59,9 @@ def _response(req):
 	try:
 		resp = urllib2.urlopen(req)
 	except urllib2.HTTPError as err:
-		print 'error', err.read() #, err.info(), err.code
-		raise
+		raise ApiError('Unexpected HTTP status code received %s %s' % (err.code, _safe_read(err)))
+	except IOError as err:
+		raise ApiError(err.message)
 
 	headers = resp.info()
 
@@ -273,7 +284,7 @@ class Share(rest.Properties):
 		try:
 			return (f for f in self.files if f.fileid == fileid).next()
 		except StopIteration:
-			raise
+			raise ApiError('No file with fileid %s in share %s' % (fileid, self.sharename))
 
 	def create_file(self, attrs = {}):
 		file = File.create(self.user, self.sharename, attrs)
@@ -416,7 +427,8 @@ class File(rest.Properties):
 		resp = conn.getresponse()
 
 		if resp.status not in range(200, 300):
-			raise urllib2.HTTPError(self.upload.puturl, resp.status, resp.reason, dict(resp.getheaders()), resp)
+			raise ApiError('Unexpected HTTP status code received %s %s' % (resp.status, _safe_read(resp)))
+			#raise urllib2.HTTPError(self.upload.puturl, resp.status, resp.reason, dict(resp.getheaders()), resp)
 			#raise urllib2.URLError('Unexpected status code received %s %s' % (resp.status, resp.reason))
 
 		self.readystate = 'uploaded'
@@ -425,16 +437,20 @@ class File(rest.Properties):
 		if self.readystate in ['uploading', 'uploaded'] or (self.readystate == 'remote' and self.share.live):
 			return _get(('files/%s/%s/blob', self.share.sharename, self.fileid))
 		else:
-			raise StandardError("Wrong state, can't read file")
+			raise ApiError("Wrong state, can't read file")
 
 	def thumb(self):
 		if self.readystate == 'uploaded':
 			return _get(('files/%s/%s/blob/thumb', self.share.sharename, self.fileid))
 		else:
-			raise StandardError("Wrong state, can't retreive image thumb")
+			raise ApiError("Wrong state, can't retreive image thumb")
 
 	def scale(self, width, height):
 		if self.readystate == 'uploaded':
 			return _get(('files/%s/%s/blob/scale?size=%sx%s', self.share.sharename, self.fileid, width, height))
 		else:
-			raise StandardError("Wrong state, can't retreive scaled image")
+			raise ApiError("Wrong state, can't retreive scaled image")
+
+if __name__ == '__main__':
+	user = User.login('r.0.uAdqxG7tSsP6qxLzVBXhUhJXcHGBSbL6Gck2m-fc.0.0.e97b008c894f064567b4e66cae9d9b271d595312')
+	print user.shares()[0].files[0].write('hello')
