@@ -12,10 +12,9 @@ import datetime
 import rest
 
 # TODO
-# investigate /sharename/fileid/upload hangs
 # make setup.py
 # update README.md
-# better error handling?
+# better error handling? (GettError)
 
 def _api_url(*url):
 	if len(url) == 1:
@@ -55,7 +54,7 @@ def _response(req):
 
 	headers = resp.info()
 
-	if headers['Content-Type'] == 'application/json':
+	if 'application/json' in headers['Content-Type']:
 		return json.loads(resp.read())
 
 	return resp
@@ -241,10 +240,19 @@ class Share(rest.Properties):
 	def destroy(cls, token, sharename):
 		_post(('shares/%s/destroy', sharename), token)
 
+	def __eq__(self, other):
+		if isinstance(other, self.__class__):
+			return other.sharename == self.sharename
+
+		return False
+
 	@files.set
 	def files(self, value):
 		value = value or []
 		self.write_attribute('files', [File(f) for f in value])
+
+		for file in self.files:
+			file.share = self
 
 	@property
 	def user(self):
@@ -255,19 +263,31 @@ class Share(rest.Properties):
 		self._user = user
 
 	def file(self, fileid):
-		file = File.find(self.sharename, fileid)
-		file.share = self
+		#file = File.find(self.sharename, fileid)
+		#file.share = self
 
-		return file
+		#return file
+
+		fileid = str(fileid)
+
+		try:
+			return (f for f in self.files if f.fileid == fileid).next()
+		except StopIteration:
+			raise
 
 	def create_file(self, attrs = {}):
 		file = File.create(self.user, self.sharename, attrs)
 		file.share = self
 
+		self.files.insert(0, file)
+
 		return file
 
 	def destroy_file(self, fileid):
+		file = self.file(fileid)
 		File.destroy(self.user, self.sharename, fileid)
+
+		self.files.remove(file)
 
 	def blob_file(self, fileid):
 		file = self.file(fileid)
@@ -277,8 +297,15 @@ class Share(rest.Properties):
 		file = self.file(fileid)
 		file.write(file)
 
+		return file
+
 	def upload_file(self, filepath):
-		return File.upload_file(self.user, self.sharename, filepath)
+		file = File.upload_file(self.user, self.sharename, filepath)
+		file.share = self
+
+		self.files.insert(0, file)
+
+		return file
 
 def _destroy_file(self):
 	share = self.share
@@ -341,6 +368,12 @@ class File(rest.Properties):
 			file.write(f, mime)
 
 			return file
+
+	def __eq__(self, other):
+		if isinstance(other, self.__class__):
+			return other.fileid == self.fileid
+
+		return False
 
 	@upload.set
 	def upload(self, value):
@@ -405,4 +438,3 @@ class File(rest.Properties):
 			return _get(('files/%s/%s/blob/scale?size=%sx%s', self.share.sharename, self.fileid, width, height))
 		else:
 			raise StandardError("Wrong state, can't retreive scaled image")
-	
