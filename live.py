@@ -5,6 +5,7 @@ import Queue
 import threading
 import string
 import random
+import inspect
 
 HOST = 'open.ge.tt'
 PORT = 443
@@ -13,6 +14,10 @@ SESSION = string.ascii_uppercase + string.ascii_lowercase + string.digits
 
 def _generate_session(size = 8):
 	return ''.join(random.choice(SESSION) for x in range(size))
+
+def _call(method, params):
+	args = inspect.getargspec(method.args)
+
 
 class JsonSocket(object):
 	def __init__(self, host, port):
@@ -45,10 +50,13 @@ class JsonSocket(object):
 		self._socket.send(msg + '\n')
 
 	def recv(self):
-		resp = self._read('\n')
+		resp = None
 
-		while resp == 'ping':
-			self.send('pong')
+		while resp and resp == 'ping':
+			if resp:
+				self.send('pong')
+
+			resp = self._read('\n')
 
 		return json.loads(resp)
 
@@ -58,19 +66,24 @@ class JsonSocket(object):
 class Api(threading.Thread):
 	def __init__(self):
 		self._socket = None #JsonSocket(HOST, PORT)
-		self._session = _generate_session()
+		self._session = None #_generate_session()
 
 		self._run = True
 
 		super(Api, self).__init__()
 
-	def connect(self, token):
+	def connect(self, token, session = None):
 		self._socket = JsonSocket(HOST, PORT)
+
+		if not session:
+			session = _generate_session()
+
+		self._session = session
 
 		self._socket.send({
 			'type' : 'connect',
 			'accesstoken' : str(token.token if hasattr(token, 'token') else token),
-			'session' : self._session
+			'session' : session
 		})
 
 		self.start()
@@ -98,6 +111,7 @@ class Api(threading.Thread):
 		try:
 			while self._run:
 				msg = self._socket.recv()
+				print msg
 				method = getattr(self, 'on_' + msg['type'])
 
 				del msg['type']
