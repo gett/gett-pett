@@ -450,3 +450,7 @@ class File(rest.Properties):
 			return _get(('files/%s/%s/blob/scale?size=%sx%s', self.share.sharename, self.fileid, width, height))
 		else:
 			raise ApiError("Wrong state, can't retreive scaled image")
+
+if __name__ == '__main__':
+	user = User.login('r.0.uAdqxG7tSsP6qxLzVBXhUhJXcHGBSbL6Gck2m-fc.0.0.e97b008c894f064567b4e66cae9d9b271d595312')
+	print user.shares()[0].files[0].write('hello')
