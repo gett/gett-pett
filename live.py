@@ -16,8 +16,10 @@ def _generate_session(size = 8):
 	return ''.join(random.choice(SESSION) for x in range(size))
 
 def _call(method, params):
-	args = inspect.getargspec(method.args)
+	args = inspect.getargspec(method).args
+	args = dict([(name, params[name]) for name in args if name in params])
 
+	return method(**args)
 
 class JsonSocket(object):
 	def __init__(self, host, port):
@@ -52,7 +54,7 @@ class JsonSocket(object):
 	def recv(self):
 		resp = None
 
-		while resp and resp == 'ping':
+		while not resp or resp == 'ping':
 			if resp:
 				self.send('pong')
 
@@ -111,11 +113,10 @@ class Api(threading.Thread):
 		try:
 			while self._run:
 				msg = self._socket.recv()
-				print msg
 				method = getattr(self, 'on_' + msg['type'])
 
 				del msg['type']
-				method(**msg)
+				_call(method, msg)
 		except (socket.error, ValueError) as err:
 			self.on_error(err)
 
