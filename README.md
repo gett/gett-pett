@@ -39,3 +39,22 @@ Tested with python 2.7.2
 
 	# blob is a file like object, which responds to read and close
 	print blob.read()
+
+# Live API
+
+	import gett
+	import live
+
+	user = gett.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
+
+	# Override the event methods
+	class MyLiveApi(live.Api):
+		def on_download(self, sharename, fileid, filename):
+			file = user.share(sharename).file(fileid)
+
+			with open('path/to/file') as f:
+				file.write(f)
+
+	# Create and connect
+	api = MyLiveApi()
+	api.connect(user)
