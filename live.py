@@ -7,6 +7,14 @@ import string
 import random
 import inspect
 
+import httplib
+import os
+import mimetypes
+import time
+import logging
+
+import rest
+
 HOST = 'open.ge.tt'
 PORT = 443
 
@@ -125,14 +133,6 @@ class Api(threading.Thread):
 		self._run = False
 		self._socket.close()
 
-
-import gett
-import httplib
-import os
-import mimetypes
-import time
-import logging
-
 BUFFER_SIZE = 65535
 _logger = logging.getLogger('gett.pool')
 
@@ -145,7 +145,14 @@ class PoolApi(Api):
 	def on_download(self, sharename, fileid):
 		_logger.debug('download received from live api for file %s in share %s', fileid, sharename)
 
-		self._pool.download(sharename, fileid)
+		self._pool.api('download', sharename, fileid)
+		#self._pool.download(sharename, fileid)
+
+	def on_violatedterms(self, sharename, fileid):
+		self._pool.api('violatedterms', sharename, fileid)
+
+	def on_storagelimit(self, sharename, fileid):
+		self._pool.api('storagelimit', sharename, fileid)
 
 	def on_error(self, err):
 		_logger.error('live api error %s', err)
@@ -174,6 +181,10 @@ class Uploader(threading.Thread):
 	def __str__(self):
 		return '[{ sharename : %s, fileid : %s } started=%s uploaded=%s error=%s]' % \
 			(self.file.sharename, self.file.fileid, self.started, self.uploaded, self.error)
+
+	@property
+	def running(self):
+		return self.started and not (self.uploaded or self.error)
 
 	def stop(self):
 		pass
@@ -206,16 +217,21 @@ class Uploader(threading.Thread):
 
 				conn.request('PUT', url.putpath(), None, headers)
 
-				self._event('uploading', 0)
-
 				read = 0
+				progress = 0
+
+				self._event('uploading', progress)
 
 				while read < size:
 					buffer = f.read(BUFFER_SIZE)
 					conn.send(buffer)
 					read += len(buffer)
 
-					self._event('uploading', 100 * float(read) / size)
+					new_progress = int(100 * float(read) / size)
+
+					if new_progress > progress:
+						progress = new_progress
+						self._event('uploading', progress)
 
 				resp = conn.getresponse()
 
@@ -223,7 +239,7 @@ class Uploader(threading.Thread):
 					raise IOError('Received unexpected response %s %s' % (resp.status, resp.message))
 
 				self.uploaded = True
-				_logger.info('uploaded file %s', self.file.fileid)
+				_logger.info('uploaded file %s in share %s', self.file.fileid, self.file.sharename)
 
 				self._event('upload')
 		except Exception as err:
@@ -278,8 +294,8 @@ class Pool(threading.Thread):
 	def event(self, what, file, *args):
 		self._message('event', { 'type' : what, 'args' : args, 'file' : file })
 
-	def download(self, sharename, fileid):
-		self._message('download', { 'sharename' : sharename, 'fileid' : fileid })
+	def api(self, what, sharename, fileid):
+		self._message(what, { 'sharename' : sharename, 'fileid' : fileid })
 
 	def stop(self):
 		self._message('self', { 'action' : 'stop' })
@@ -287,17 +303,20 @@ class Pool(threading.Thread):
 	def run(self):
 		while True:
 			priority, time, type, params = self._message_queue.get(True)
+			active_uploads = any([u.running for u in self._uploading])
 
 			_logger.debug('message received %s', [priority, time, type, params])
 
-			if type == 'add' and not self._uploading and self._pool:
+			if type == 'add' and not active_uploads and self._pool:
 				with self._pool_lock:
 					uploader = self._pool.pop()
 					self._uploading.append(uploader)
 					uploader.start()
 			elif type == 'event':
 				file, type = params['file'], params['type']
-				self._message('add')
+
+				if type == 'upload':
+					self._message('add')
 
 				try:
 					file.emit_event(type, *params['args'])
@@ -315,6 +334,7 @@ class Pool(threading.Thread):
 						self._uploading.append(uploader)
 						uploader.start()
 					else:
+						_logger.debug('file %s in share %s already being uploaded', fileid, sharename)
 						uploader = _find(self._uploading, fn)
 
 				#uploader.file.emit_event('download')
@@ -333,11 +353,6 @@ class Pool(threading.Thread):
 
 	def _message(self, type, params = None):
 		self._message_queue.put((Pool.MESSAGE_PRIORITIES.index(type), time.time(), type, params))
-
-#class LazyPool(Pool):
-#	def add(self, filename, file):
-#		with self._pool_lock:
-#			self._pool.append(Uploader(filename, file, self))
 
 def _on_download(file):
 	file.downloads += 1
@@ -359,16 +374,16 @@ def _pool(token, pools):
 
 	return pool
 
-class File(gett.File):
+class File(rest.File):
 	_pools = {}
 
 	@classmethod
-	def upload_file(cls, token, sharename, filepath, listeners = {}):
+	def upload_file(cls, token, sharename, filepath, callback = None):
 		pool = _pool(token, cls._pools)
 		file = cls.create(token, sharename, { 'filename' : os.path.basename(filepath), 'session' : pool.session })
 
-		for name, fn in listeners.items():
-			file.on_event(name, fn)
+		if callback:
+			callback(file)
 
 		pool.add(filepath, file)
 
@@ -397,66 +412,17 @@ class File(gett.File):
 
 		for listener in event_list:
 			listener(self, *args, **kwargs)
+		
+class Share(rest.Share):
+	file_cls = File
 
-if __name__ == '__main__':
-	pass
+	def upload_file(self, filepath, callback = None):
+		file = self.file_cls.upload_file(self.user, self.sharename, filepath, callback)
+		file.share = self
 
-	import gett
+		self.files.insert(0, file)
 
-	fh = logging.StreamHandler()
-	fh.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
+		return file
 
-	_logger.addHandler(fh)
-	_logger.setLevel(logging.DEBUG)
-
-	user = gett.User.login('r.0.uAdqxG7tSsP6qxLzVBXhUhJXcHGBSbL6Gck2m-fc.0.0.e97b008c894f064567b4e66cae9d9b271d595312')
-	share = user.share('3ab7zEB')
-
-	print share
-	#print share
-
-	#listeners = {}
-
-	#for name in ['upload', 'uploading', 'error']:
-	#	def fn(file, arg = None):
-	#		print '------ file event %s %s' % (name, arg)
-
-	#	listeners[name] = fn
-
-	#f = File.upload_file(user, share.sharename, 'echo.js', listeners)
-
-"""
-	class H(object):
-		def h(self, g):
-			return 'original'
-
-	print H().h('hello')
-
-	H.h = lambda self, g: self
-
-	print H().h('what')
-
-	h = H()
-
-	h.h = lambda self, g: self
-
-	print h.h('')
-"""
-"""
-	import httplib
-
-	conn = httplib.HTTPConnection('localhost:9999')
-
-	conn.request('POST', '/', None, { 'Content-Length' : 10 })
-
-	#conn.endheaders()
-
-	conn.send('hello')
-	conn.send('12345')
-
-	resp = conn.getresponse()
-
-	print resp.status
-
-	conn.close()
-"""
+class User(rest.User):
+	share_cls = Share
