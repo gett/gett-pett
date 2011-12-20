@@ -23,7 +23,7 @@ print rest.Share.all('<accesstoken as string>')
 # needs to be done manually.
 
 # get all files in a share. NOTE that this is not a method call.
-print user.share('8gt4').files
+print user.share('<sharename>').files
 
 # create a share and a file
 share = user.create_share({ 'title' : 'hello' })
@@ -73,4 +73,27 @@ user = live.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' }
 # Add the file to a upload pool, which uploads files one at a time. Also listens for live API
 # events and starts uploading a file when it receives a download request.
 user.share('<sharename>').upload_file('path/to/file')
+
+# Attach event listeners to the file
+def on_file(file):
+	def download(f):
+		print 'someone started downloading file %s' % f
+
+	def uploading(f, progress):
+		print 'uploading file %s progress %s' % (f, progress)
+
+	def upload(f):
+		pring 'finished uploading file %s' % f
+
+	file.on_event('download', download)
+	file.on_event('uploading', uploading)
+	file.on_event('upload', upload)
+
+file = user.share('<sharename>').upload_file('path/to/another/file', on_file)
+
+# Add listeners directly to the returned file
+def error(f, err):
+	print 'error %s on file %s' % (err, f)
+
+file.on_event('error', error)
 ```
