@@ -103,6 +103,8 @@ class Token(rest.Properties):
 		return self.expires <= time.time()
 
 class User(rest.Properties):
+	share_cls = None
+
 	class Storage(rest.Properties):
 		used = rest.property()
 		limit = rest.property()
@@ -144,6 +146,9 @@ class User(rest.Properties):
 		user = cls.login(credentials_or_refreshtoken)
 		return user.token
 
+	def build_share(self, attrs = {}):
+		return self.share_cls(attrs)
+
 	@storage.set
 	def storage(self, value):
 		if isinstance(value, dict):
@@ -171,7 +176,7 @@ class User(rest.Properties):
 		return self.storage
 
 	def shares(self):
-		shares = Share.all(self)
+		shares = self.share_cls.all(self)
 		
 		for share in shares:
 			share.user = self
@@ -179,25 +184,25 @@ class User(rest.Properties):
 		return shares
 
 	def share(self, sharename):
-		share = Share.find(sharename)
+		share = self.share_cls.find(sharename)
 		share.user = self
 
 		return share
 
 	def create_share(self, attrs = {}):
-		share = Share.create(self, attrs)
+		share = self.share_cls.create(self, attrs)
 		share.user = self
 
 		return share
 
 	def update_share(self, sharename, attrs = {}):
-		share = Share.update(self, sharename, attrs)
+		share = self.share_cls.update(self, sharename, attrs)
 		share.user = self
 
 		return share
 
 	def destroy_share(self, sharename):
-		Share.destroy(self, sharename)
+		self.share_cls.destroy(self, sharename)
 
 def _created(self, value):
 	self.write_attribute('created', datetime.datetime.fromtimestamp(value))
@@ -212,6 +217,8 @@ def _destroy_share(self):
 	self.__class__.destroy(self.user, self.sharename)
 
 class Share(rest.Properties):
+	file_cls = None
+
 	def __new__(cls, *args, **kwargs):
 		instance = super(Share, cls).__new__(cls, *args, **kwargs)
 
@@ -257,17 +264,22 @@ class Share(rest.Properties):
 
 		return False
 
+	def build_file(self, attrs = {}):
+		return self.file_cls(attrs)
+
 	@files.set
 	def files(self, value):
 		value = value or []
-		self.write_attribute('files', [File(f) for f in value])
+		self.write_attribute('files', [self.build_file(f) for f in value])
 
-		for file in self.files:
-			file.share = self
+		#self.write_attribute('files', [File(f) for f in value])
+
+		#for file in self.files:
+		#	file.share = self
 
 	@property
 	def user(self):
-		return self._user
+		return getattr(self, '_user', None) #self._user
 
 	@user.setter
 	def user(self, user):
@@ -287,7 +299,7 @@ class Share(rest.Properties):
 			raise ApiError('No file with fileid %s in share %s' % (fileid, self.sharename))
 
 	def create_file(self, attrs = {}):
-		file = File.create(self.user, self.sharename, attrs)
+		file = self.file_cls.create(self.user, self.sharename, attrs)
 		file.share = self
 
 		self.files.insert(0, file)
@@ -296,7 +308,7 @@ class Share(rest.Properties):
 
 	def destroy_file(self, fileid):
 		file = self.file(fileid)
-		File.destroy(self.user, self.sharename, fileid)
+		self.file_cls.destroy(self.user, self.sharename, fileid)
 
 		self.files.remove(file)
 
@@ -311,7 +323,7 @@ class Share(rest.Properties):
 		return file
 
 	def upload_file(self, filepath):
-		file = File.upload_file(self.user, self.sharename, filepath)
+		file = self.file_cls.upload_file(self.user, self.sharename, filepath)
 		file.share = self
 
 		self.files.insert(0, file)
@@ -321,6 +333,14 @@ class Share(rest.Properties):
 def _destroy_file(self):
 	share = self.share
 	self.__class__.destroy(share.user, share.sharename, self.fileid)
+
+def _path(url):
+	url = urlparse.urlparse(url)
+	return url.path + '?' + url.query
+
+def _host(url):
+	url = urlparse.urlparse(url)
+	return url.netloc
 
 class File(rest.Properties):
 	def __new__(cls, *args, **kwargs):
@@ -339,12 +359,20 @@ class File(rest.Properties):
 			return cls(upload)
 
 		def putpath(self):
-			url = urlparse.urlparse(self.puturl)
-			return url.path + '?' + url.query
+			return _path(self.puturl)
+			#url = urlparse.urlparse(self.puturl)
+			#return url.path + '?' + url.query
 
 		def postpath(self):
-			url = urlparse.urlparse(self.posturl)
-			return url.path + '?' + url.query
+			return _path(self.posturl)
+			#url = urlparse.urlparse(self.posturl)
+			#return url.path + '?' + url.query
+
+		def puthost(self):
+			return _host(self.puturl)
+
+		def posthost(self):
+			return _host(self.posturl)
 
 	fileid = rest.property(id = True)
 	filename = rest.property()
@@ -382,7 +410,7 @@ class File(rest.Properties):
 
 	def __eq__(self, other):
 		if isinstance(other, self.__class__):
-			return other.fileid == self.fileid
+			return other.fileid == self.fileid and other.sharename == self.sharename
 
 		return False
 
@@ -400,7 +428,7 @@ class File(rest.Properties):
 
 		if upload is None:
 			share = self.share
-			upload = File.Upload.get(share.user, share.sharename, self.fileid)
+			upload = File.Upload.get(self.share.user, self.share.sharename, self.fileid)
 
 			self.upload = upload
 
@@ -408,7 +436,7 @@ class File(rest.Properties):
 
 	@property
 	def share(self):
-		return self._share
+		return getattr(self, '_share', None) #self._share
 
 	@share.setter
 	def share(self, share):
@@ -416,22 +444,25 @@ class File(rest.Properties):
 		self._share = share
 
 	def write(self, file, mimetype = None):
-		headers =  { 'User-Agent' : 'gett-pett' }
+		if not mimetype:
+			mimetype = mimetypes.guess_type(self.filename)
+		
+		headers =  { 
+			'User-Agent' : 'gett-pett',
+			'Content-Type' : mimetype
+		}
 
-		if mimetype:
-			headers['Content-Type'] = mimetype
-
-		conn = httplib.HTTPConnection('blobs.ge.tt')
+		conn = httplib.HTTPConnection(self.upload.puthost())
 		conn.request('PUT', self.upload.putpath(), file, headers)
 
 		resp = conn.getresponse()
 
 		if resp.status not in range(200, 300):
 			raise ApiError('Unexpected HTTP status code received %s %s' % (resp.status, _safe_read(resp)))
-			#raise urllib2.HTTPError(self.upload.puturl, resp.status, resp.reason, dict(resp.getheaders()), resp)
-			#raise urllib2.URLError('Unexpected status code received %s %s' % (resp.status, resp.reason))
 
 		self.readystate = 'uploaded'
+
+		conn.close()
 
 	def blob(self):
 		if self.readystate in ['uploading', 'uploaded'] or (self.readystate == 'remote' and self.share.live):
@@ -450,3 +481,6 @@ class File(rest.Properties):
 			return _get(('files/%s/%s/blob/scale?size=%sx%s', self.share.sharename, self.fileid, width, height))
 		else:
 			raise ApiError("Wrong state, can't retreive scaled image")
+
+User.share_cls = Share
+Share.file_cls = File
