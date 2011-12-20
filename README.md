@@ -3,21 +3,21 @@
 Tested with python 2.7.2
 
 ``` python
-import gett
+import rest
 
 # authenticate and get user information
-user = gett.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
+user = rest.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
 # or 
-user = gett.User.login('<refreshtoken as string>')
+user = rest.User.login('<refreshtoken as string>')
 
 # fetch all shares
 print user.shares()
 # or
-print gett.Share.all(user.token)
+print rest.Share.all(user.token)
 # or
-print gett.Share.all(user)
+print rest.Share.all(user)
 # or
-print gett.Share.all('<accesstoken as string>')
+print rest.Share.all('<accesstoken as string>')
 
 # NOTE that the last three calls will not set the accesstoken or user on the share, this
 # needs to be done manually.
@@ -45,10 +45,10 @@ print blob.read()
 # Live API
 
 ``` python
-import gett
+import rest
 import live
 
-user = gett.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
+user = rest.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
 
 # Override the event methods
 class MyLiveApi(live.Api):
@@ -61,4 +61,16 @@ class MyLiveApi(live.Api):
 # Create and connect
 api = MyLiveApi()
 api.connect(user)
+```
+
+# Extended live API
+
+``` python
+import live
+
+user = live.User.login({ 'apikey' : '...', 'email' : '...', 'password' : '...' })
+
+# Add the file to a upload pool, which uploads files one at a time. Also listens for live API
+# events and starts uploading a file when it receives a download request.
+user.share('<sharename>').upload_file('path/to/file')
 ```
